@@ -76,3 +76,13 @@ def test_interactive_builder_with_scripted_answers():
     assert isinstance(spec, SystemSpec) and spec.tools[0].name == "lookup"
     assert spec.sources[0].kind == "email"
     assert all(spec.enforcement.values())
+
+
+def test_demo_needs_no_key_and_writes_every_output(tmp_path, monkeypatch, capsys):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    out = tmp_path / "out"
+    assert cli.main(["demo", "--dir", str(out)]) == 0
+    assert sorted(p.name for p in out.iterdir()) == ["flow.mmd", "model.json", "model.td.json", "report.md"]
+    assert "Mock mode" in (out / "report.md").read_text()
+    printed = capsys.readouterr().out
+    assert "T1" in printed and "tm init" in printed

@@ -1,4 +1,4 @@
-"""Command line interface: tm init | lint | run | interactive."""
+"""Command line interface: tm demo | init | lint | run | interactive."""
 from __future__ import annotations
 
 import argparse
@@ -6,6 +6,8 @@ import os
 import sys
 from importlib import resources
 from pathlib import Path
+
+import yaml
 
 from . import export, pipeline, report
 from .interactive import build_spec
@@ -63,6 +65,36 @@ def cmd_init(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_demo(args: argparse.Namespace) -> int:
+    """Everything at once on the VictoriaBot example: no spec, no flags, no key (mock by default)."""
+    example = resources.files("threatmodel").joinpath("data/victoriabot.yaml")
+    spec = SystemSpec.from_dict(yaml.safe_load(example.read_text(encoding="utf-8")))
+    llm = make_llm(args.llm, model=args.model, base_url=args.base_url)
+    print(f"Threat modeling the VictoriaBot example. LLM: {llm.label}")
+    model = pipeline.run(spec, llm=llm, top_n=12)
+
+    out = Path(args.dir)
+    out.mkdir(parents=True, exist_ok=True)
+    files = {
+        "report.md": (report.to_markdown, "the four-question report, with a data-flow diagram"),
+        "flow.mmd": (export.to_mermaid, "the diagram alone; paste it into https://mermaid.live"),
+        "model.td.json": (export.to_threat_dragon,
+                          "open in OWASP Threat Dragon (threatdragon.com, Local Session)"),
+        "model.json": (report.to_json, "everything, as JSON"),
+    }
+    for name, (render, _) in files.items():
+        (out / name).write_text(render(model) + "\n", encoding="utf-8")
+
+    print(f"\nTop threats ({len(model.threats)} shown, {model.omitted} more below the cut):")
+    for t in model.threats[:5]:
+        print(f"  {t.id}  score {t.score:>2}  {t.category:<22} -> {t.target}")
+    print(f"\nWrote to {out}/:")
+    for name, (_, what) in files.items():
+        print(f"  {name:<14} {what}")
+    print("\nNext: tm init system.yaml   (your own copy to edit, then: tm lint system.yaml)")
+    return 0
+
+
 def cmd_lint(args: argparse.Namespace) -> int:
     return _finish(load_spec(args.spec), args, use_llm=False)
 
@@ -100,6 +132,14 @@ def build_parser() -> argparse.ArgumentParser:
             sp.add_argument("--model", help="override the model (or set TM_MODEL)")
             sp.add_argument("--base-url", help="local backend URL (default Ollama at "
                                                "http://localhost:11434/v1, or set TM_BASE_URL)")
+
+    s = sub.add_parser("demo", help="run everything on the VictoriaBot example and write all outputs")
+    s.add_argument("--dir", default="out", help="where to write the outputs (default: out)")
+    s.add_argument("--llm", choices=BACKENDS, default="mock",
+                   help="mock (default, no key), anthropic, or local")
+    s.add_argument("--model", help="override the model (or set TM_MODEL)")
+    s.add_argument("--base-url", help="local backend URL (default Ollama)")
+    s.set_defaults(func=cmd_demo)
 
     s = sub.add_parser("init", help="write an example spec to edit")
     s.add_argument("path", nargs="?", default="system.yaml")
