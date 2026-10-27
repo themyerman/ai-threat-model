@@ -235,11 +235,13 @@ class ThreatModel:
     threats: list[Threat]  # ranked, truncated, ids assigned
     omitted: int = 0  # threats found but below the cut
     llm_used: bool = False
+    llm_label: str = ""  # which backend, e.g. "anthropic (claude-sonnet-5-5)" or "mock"
 
     def to_dict(self) -> dict:
         return {
             "spec": self.spec.to_dict(),
             "llm_used": self.llm_used,
+            "llm": self.llm_label,
             "omitted": self.omitted,
             "threats": [dict(asdict(t), score=t.score) for t in self.threats],
         }

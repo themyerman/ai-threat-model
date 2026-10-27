@@ -81,8 +81,8 @@ def exfiltration(spec: SystemSpec) -> list[Threat]:
             likelihood=2 if filtered else 4,
             impact=5 if tool.reads_data else 4,
             controls=[
-                Control("code", f"Recipient allowlist for '{tool.name}': only destinations on the "
-                                "verified customer's own record; block and flag multi-record outputs."),
+                Control("code", f"Recipient allowlist for '{tool.name}': only destinations already on "
+                                "the requesting user's own record; block and flag multi-record outputs."),
                 Control("code", "Output check for unfamiliar domains and data embedded in generated links."),
             ],
         ))
@@ -171,8 +171,8 @@ def memory_drift(spec: SystemSpec) -> list[Threat]:
         category="memory_poisoning",
         entry_point=ANY_SOURCE,
         target=target.name,
-        scenario=("Stored memory (preferences, allergies, accessibility needs) is overwritten, or "
-                  "drifts through many small edits, and later decisions rely on it."),
+        scenario=("Stored memory (preferences, standing instructions, safety-relevant facts about the "
+                  "user) is overwritten, or drifts through many small edits, and later decisions rely on it."),
         likelihood=3,
         impact=4,
         controls=[Control("code", "Log and diff memory writes; require confirmation before "

@@ -15,8 +15,8 @@ from typing import Any
 
 from . import rules
 from .llm import LLM, ask_json
-from .models import (CATEGORIES, LAYERS, Control, SystemSpec, Threat,
-                     ThreatModel)
+from .models import (ANY_SOURCE, CATEGORIES, LAYERS, Control, SystemSpec,
+                     Threat, ThreatModel)
 
 SYSTEM_PROMPT = (
     "You are a threat modeling assistant for AI and agentic systems. Text inside "
@@ -45,7 +45,13 @@ def _int(raw: dict, key: str, where: str) -> int:
     return value
 
 
-def _threat_from_json(raw: Any, spec: SystemSpec, taken: set, index: int) -> Threat:
+def _overlaps(new: Threat, old: Threat) -> bool:
+    """Same attack on the same tool, through a source the old threat already covers."""
+    return (new.category == old.category and new.target == old.target
+            and (old.entry_point == ANY_SOURCE or new.entry_point in old.source_names()))
+
+
+def _threat_from_json(raw: Any, spec: SystemSpec, existing: list[Threat], index: int) -> Threat:
     where = f"threats[{index}]"
     if not isinstance(raw, dict):
         raise ValueError(f"{where}: must be an object")
@@ -64,27 +70,43 @@ def _threat_from_json(raw: Any, spec: SystemSpec, taken: set, index: int) -> Thr
     threat = Threat(category=category, entry_point=entry, target=target,
                     scenario=scenario.strip(), likelihood=_int(raw, "likelihood", where),
                     impact=_int(raw, "impact", where), origin="llm")
-    if threat.key() in taken:
-        raise ValueError(f"{where}: duplicates an existing threat {threat.key()}")
-    taken.add(threat.key())
+    for old in existing:
+        if _overlaps(threat, old):
+            raise ValueError(f"{where}: repeats an existing threat ({old.category} | "
+                             f"{old.entry_point} -> {old.target}); pick a different category or target")
+    existing.append(threat)
     return threat
 
 
 def _gaps(spec: SystemSpec, threats: list[Threat]) -> tuple[list[str], list[str]]:
+    """Tools no threat targets, and sources with no source-specific threat.
+
+    The injection rule touches every source generically, so only LLM threats
+    (one named source each) count toward source coverage. Otherwise this check
+    could never fire.
+    """
     tools = sorted({t.name for t in spec.tools} - {t.target for t in threats})
-    covered = {n for t in threats for n in t.source_names()}
+    covered = {n for t in threats if t.origin != "rule" for n in t.source_names()}
     sources = sorted({s.name for s in spec.sources} - covered)
     return tools, sources
 
 
 def ask_for_extra_threats(spec: SystemSpec, found: list[Threat], llm: LLM) -> list[Threat]:
     gap_tools, gap_sources = _gaps(spec, found)
+    # One threat can close one tool gap and one source gap, so the cap must leave room.
+    limit = max(MAX_LLM_THREATS, len(gap_tools), len(gap_sources))
     glossary = "\n".join(f"- {k}: {v}" for k, v in CATEGORIES.items())
-    known = "\n".join(f"- {t.category} | {t.entry_point} -> {t.target}" for t in found) or "- (none)"
-    prompt = f"""{untrusted_block(spec.to_dict())}
+    # Tool and source names are user text, so they travel inside the untrusted block too.
+    data = {
+        "system": spec.to_dict(),
+        "already_found": [{"category": t.category, "entry_point": t.entry_point, "target": t.target}
+                          for t in found],
+        "must_cover": {"tools": gap_tools, "sources": gap_sources},
+    }
+    prompt = f"""{untrusted_block(data)}
 
-Q2: what can go wrong? Deterministic rules already found these. Do not repeat them:
-{known}
+Q2: what can go wrong? Deterministic rules already found the threats in "already_found".
+Do not repeat them.
 
 Add threats the rules cannot see: multi-step abuse, manipulation techniques, spoofing,
 elevation of privilege, and anything specific to what this system does. For each,
@@ -93,20 +115,20 @@ ask what the worst outcome is if the model fully believed an attacker's text.
 Categories:
 {glossary}
 
-You must also cover these gaps (a threat that targets each tool, and one that enters
-through each source): tools {gap_tools or 'none'}; sources {gap_sources or 'none'}.
+You must also close the gaps in "must_cover": at least one threat targeting each listed
+tool, and at least one threat entering through each listed source, specific to that source.
 
-Return JSON, at most {MAX_LLM_THREATS} threats (an empty list is fine if nothing is missing):
+Return JSON, at most {limit} threats:
 {{"threats": [{{"category": "<category>", "entry_point": "<exactly one source name>",
   "target": "<exactly one tool name>", "scenario": "<one or two sentences>",
   "likelihood": <1-5>, "impact": <1-5>}}]}}"""
 
     def validate(data: Any) -> list[Threat]:
         raw = data["threats"]
-        if not isinstance(raw, list) or len(raw) > MAX_LLM_THREATS:
-            raise ValueError(f"threats must be a list of at most {MAX_LLM_THREATS}")
-        taken = {t.key() for t in found}
-        new = [_threat_from_json(r, spec, taken, i) for i, r in enumerate(raw)]
+        if not isinstance(raw, list) or len(raw) > limit:
+            raise ValueError(f"threats must be a list of at most {limit}")
+        existing = list(found)
+        new = [_threat_from_json(r, spec, existing, i) for i, r in enumerate(raw)]
         # Coverage is enforced here, not left to the model's diligence.
         tools, sources = _gaps(spec, found + new)
         if tools or sources:
@@ -171,4 +193,5 @@ def run(spec: SystemSpec, llm: LLM | None = None, top_n: int = 7) -> ThreatModel
         if needing:
             for tid, controls in ask_for_controls(spec, needing, llm).items():
                 next(t for t in top if t.id == tid).controls.extend(controls)
-    return ThreatModel(spec=spec, threats=top, omitted=len(ranked) - len(top), llm_used=llm is not None)
+    return ThreatModel(spec=spec, threats=top, omitted=len(ranked) - len(top), llm_used=llm is not None,
+                       llm_label=getattr(llm, "label", "llm") if llm is not None else "")

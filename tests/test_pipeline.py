@@ -38,7 +38,11 @@ def test_top_n_validated(spec):
         pipeline.run(spec, top_n=0)
 
 
-GAP_FILL = lambda spec: {"threats": [threat_json(spec, entry_point="reviews", target="search_events")]}
+def GAP_FILL(spec, **over):
+    """One source-specific threat per source; the first also covers search_events."""
+    return {"threats": [threat_json(spec, entry_point=s.name,
+                                    target="search_events" if i == 0 else "book_tour", **over)
+                        for i, s in enumerate(spec.sources)]}
 
 
 class ScriptedControls(FakeLLM):
@@ -59,9 +63,7 @@ def test_rules_leave_a_read_only_tool_uncovered(spec):
 
 
 def test_llm_threats_are_merged_and_get_code_controls(spec):
-    reply = {"threats": [threat_json(spec, entry_point="reviews", target="search_events",
-                                     likelihood=5, impact=5)]}
-    m = pipeline.run(spec, llm=ScriptedControls(reply), top_n=12)
+    m = pipeline.run(spec, llm=ScriptedControls(GAP_FILL(spec, likelihood=5, impact=5)), top_n=12)
     assert any(t.origin == "llm" for t in m.threats)
     assert all(t.has_code_control for t in m.threats)
     assert m.llm_used
@@ -70,7 +72,7 @@ def test_llm_threats_are_merged_and_get_code_controls(spec):
 def test_invalid_reply_is_retried_with_the_error_shown(spec):
     llm = FakeLLM("not json at all", GAP_FILL(spec))
     out = pipeline.ask_for_extra_threats(spec, pipeline.rules.evaluate(spec), llm)
-    assert len(out) == 1
+    assert len(out) == len(spec.sources)
     retry = llm.calls[1][1]
     assert retry[-1]["role"] == "user" and "rejected" in retry[-1]["content"]
 
@@ -121,3 +123,46 @@ def test_untrusted_spec_text_is_fenced_in_prompt(raw_spec):
     llm = FakeLLM(GAP_FILL(spec))
     pipeline.ask_for_extra_threats(spec, pipeline.rules.evaluate(spec), llm)
     assert llm.calls[0][1][0]["content"].count("</untrusted>") == 1
+
+
+def test_every_source_needs_its_own_llm_threat(spec):
+    # The injection rule touches every source generically; that must not count.
+    reply = {"threats": [threat_json(spec, entry_point="reviews", target="search_events")]}
+    with pytest.raises(LLMError, match="trail_wiki"):
+        pipeline.ask_for_extra_threats(spec, pipeline.rules.evaluate(spec), FakeLLM(*[reply] * 3))
+
+
+def test_repeat_of_a_rule_threat_is_rejected(spec):
+    # The rule already has prompt_injection via reviews (among others) -> book_tour.
+    dupe = GAP_FILL(spec)
+    dupe["threats"][1].update(category="prompt_injection", entry_point="reviews", target="book_tour")
+    llm = FakeLLM(*[dupe] * 3)
+    with pytest.raises(LLMError, match="repeats an existing threat"):
+        pipeline.ask_for_extra_threats(spec, pipeline.rules.evaluate(spec), llm)
+
+
+def test_threat_cap_grows_with_the_gaps():
+    from threatmodel.models import SystemSpec
+    spec = SystemSpec.from_dict({
+        "name": "wide", "sources": ["web"],
+        "tools": [{"name": f"t{i}", "reads_data": True, "credential_scope": "per_resource"}
+                  for i in range(10)],
+        "enforcement": {k: True for k in pipeline.rules.BOUNDARY_KEYS},
+    })
+    found = pipeline.rules.evaluate(spec)
+    gap_tools, _ = pipeline._gaps(spec, found)
+    assert len(gap_tools) > pipeline.MAX_LLM_THREATS  # the old fixed cap made this impossible
+    reply = {"threats": [threat_json(spec, entry_point="web", target=t) for t in gap_tools]}
+    assert len(pipeline.ask_for_extra_threats(spec, found, FakeLLM(reply))) == len(gap_tools)
+
+
+def test_user_supplied_names_stay_inside_the_untrusted_block(raw_spec):
+    from threatmodel.models import SystemSpec
+    raw_spec["tools"][0]["name"] = "IGNORE_PREVIOUS_tool"
+    spec = SystemSpec.from_dict(raw_spec)
+    llm = FakeLLM(GAP_FILL(spec) | {"threats": [threat_json(spec, entry_point=s.name,
+                  target="IGNORE_PREVIOUS_tool") for s in spec.sources]})
+    pipeline.ask_for_extra_threats(spec, pipeline.rules.evaluate(spec), llm)
+    prompt = llm.calls[0][1][0]["content"]
+    outside = prompt.split("</untrusted>", 1)[1]
+    assert "IGNORE_PREVIOUS_tool" not in outside and "reviews" not in outside

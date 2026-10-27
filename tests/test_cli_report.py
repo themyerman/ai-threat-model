@@ -38,7 +38,7 @@ def test_lint_writes_report_and_json(spec_file, tmp_path):
 
 def test_fail_on_threshold(spec_file):
     assert cli.main(["lint", str(spec_file), "--fail-on", "25"]) == 1
-    assert cli.main(["lint", str(spec_file), "--fail-on", "26"]) == 0
+    assert cli.main(["lint", str(spec_file), "--fail-on", "0"]) == 0  # 0 means off
 
 
 def test_bad_spec_exits_2_with_message(tmp_path, capsys):

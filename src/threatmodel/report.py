@@ -31,6 +31,12 @@ def to_markdown(model: ThreatModel) -> str:
     if not model.llm_used:
         lines += ["> Rules only: no LLM was used, so this covers the common shortcuts but not "
                   "anything specific to what this system does.", ""]
+    elif model.llm_label.startswith("mock"):
+        lines += ["> Mock mode: the LLM stages ran against canned, deterministic replies, not a "
+                  "real model. Threats marked `llm` are templates. Use this to see how the "
+                  "pipeline works, not to judge a system.", ""]
+    else:
+        lines += [f"_LLM stages: {model.llm_label}._", ""]
 
     # Q1
     lines += ["## Q1. What are we working on?", ""]
