@@ -1,0 +1,61 @@
+# Example system spec: the VictoriaBot from the talk.
+# Every field is checked on load; a typo is an error, not a silent skip.
+name: VictoriaBot
+purpose: Finds events, checks trail conditions, books tours, and pays on the visitor's behalf.
+credentials: One service identity holding the visitor's payment token.
+
+tools:
+  - name: search_events
+    description: Searches listings and tour operator pages.
+    reads_data: true
+    credential_scope: per_resource
+
+  - name: book_tour
+    description: Creates and pays for a reservation.
+    reads_data: true
+    writes_data: true
+    spends_money: true
+    irreversible: true
+    human_approval: false
+    credential_scope: broad
+
+  - name: send_confirmation
+    description: Emails or texts a booking confirmation.
+    reads_data: true
+    sends_external: true
+    credential_scope: per_user
+
+  - name: edit_trail_wiki
+    description: Reads and posts to the shared trail conditions wiki.
+    reads_data: true
+    writes_data: true
+    separate_read_write_tokens: false
+    credential_scope: per_user
+
+  - name: calendar_sync
+    description: Adds confirmations to a linked calendar.
+    writes_data: true
+    standing_access: true
+    credential_scope: per_user
+
+sources:
+  - name: tour_operator_pages
+    kind: web
+  - name: reviews
+    kind: web
+  - name: trail_wiki
+    kind: feed
+  - name: support_tickets
+    kind: ticket
+  - name: tourist_chat
+    kind: user_chat
+
+memory: true
+config_rollup: true
+
+enforcement:
+  tool_allowlist: true
+  schema_validation: false
+  server_side_authz: false
+  output_filtering: false
+  audit_logging: false
