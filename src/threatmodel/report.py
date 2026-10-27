@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 
+from .export import to_mermaid
 from .models import ENFORCEMENT_KEYS, ThreatModel
 
 RE_REVIEW = (
@@ -51,6 +52,8 @@ def to_markdown(model: ThreatModel) -> str:
                      f"{_yn(t.sends_external)} | {_yn(t.spends_money)} | {_yn(t.irreversible)} | "
                      f"{_yn(t.human_approval)} | {t.credential_scope} |")
     lines += ["", "Untrusted sources: " + ", ".join(f"{s.name} ({s.kind})" for s in spec.sources), ""]
+    lines += ["Data flow (edge labels are threat IDs from Q2; red is High, amber is Medium):", "",
+              "```mermaid", to_mermaid(model), "```", ""]
 
     # Q2
     lines += ["## Q2. What can go wrong?", "",

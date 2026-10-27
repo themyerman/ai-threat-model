@@ -31,6 +31,7 @@ retried with the error shown; if it never validates, the run fails rather than g
     tm interactive --save system.yaml   # answer Q1 at the prompt
 
 Flags: `--top N` (default 7), `--out report.md`, `--json model.json`,
+`--mermaid flow.mmd`, `--threat-dragon model.td.json` (see Exports),
 `--fail-on SCORE` (exit 1 if any threat scores that high; 1-25), `--no-llm` (same as lint).
 Exit codes: 0 ok, 1 `--fail-on` hit, 2 bad spec or LLM failure.
 
@@ -62,6 +63,23 @@ An 8B model on a laptop runs the CPU or GPU hard and can take minutes per call;
 In CI:
 
     tm lint system.yaml --fail-on 20
+
+## Exports
+
+The report always includes a Mermaid data-flow diagram (untrusted sources -> agent ->
+tools, plus memory and config stores). GitHub renders it inline. Edge labels are the
+threat IDs from Q2; tools are shaded red for High and amber for Medium.
+`--mermaid FILE` writes the diagram on its own.
+
+`--threat-dragon FILE` writes an [OWASP Threat Dragon](https://www.threatdragon.com/)
+v2 model, so you can keep working on the threat model in a real tool. Open it in the
+desktop app, or at threatdragon.com: choose Local Session, then "Open an existing
+threat model", and paste or drop the file. You get an editable diagram with a trust
+boundary, and every threat sits on the element it targets, with its controls as
+mitigations. Threat Dragon uses STRIDE, so each AI category maps to its nearest STRIDE
+type (prompt injection is Tampering, exfiltration is Information disclosure, confused
+deputy is Elevation of privilege). The original category stays in the threat's title.
+Checked against Threat Dragon v2.6.2.
 
 ## The spec
 

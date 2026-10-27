@@ -7,7 +7,7 @@ import sys
 from importlib import resources
 from pathlib import Path
 
-from . import pipeline, report
+from . import export, pipeline, report
 from .interactive import build_spec
 from .llm import BACKENDS, LLMError, make_llm
 from .models import SpecError, SystemSpec
@@ -40,9 +40,11 @@ def _finish(spec: SystemSpec, args: argparse.Namespace, use_llm: bool) -> int:
     llm = make_llm(args.llm, model=args.model, base_url=args.base_url) if use_llm else None
     model = pipeline.run(spec, llm=llm, top_n=args.top)
     _emit(report.to_markdown(model), args.out)
-    if getattr(args, "json", None):
-        Path(args.json).write_text(report.to_json(model), encoding="utf-8")
-        print(f"wrote {args.json}")
+    for path, render in ((args.json, report.to_json), (args.mermaid, export.to_mermaid),
+                         (args.threat_dragon, export.to_threat_dragon)):
+        if path:
+            Path(path).write_text(render(model) + "\n", encoding="utf-8")
+            print(f"wrote {path}")
     fail_on = getattr(args, "fail_on", 0)
     if fail_on and any(t.score >= fail_on for t in model.threats):
         print(f"FAIL: at least one threat scores {fail_on} or higher", file=sys.stderr)
@@ -85,6 +87,9 @@ def build_parser() -> argparse.ArgumentParser:
         sp.add_argument("--top", type=_int_in(1), default=7, help="how many threats to keep (default 7)")
         sp.add_argument("--out", help="write the Markdown report to this file")
         sp.add_argument("--json", help="also write the full model as JSON")
+        sp.add_argument("--mermaid", metavar="FILE", help="also write the data-flow diagram (.mmd)")
+        sp.add_argument("--threat-dragon", metavar="FILE",
+                        help="also write an OWASP Threat Dragon v2 model (.json) to open and edit there")
         sp.add_argument("--fail-on", type=_int_in(0, 25), default=0, metavar="SCORE",
                         help="exit 1 if any threat scores at least this (1-25; 0 means off)")
         if llm:
